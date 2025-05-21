@@ -12,6 +12,7 @@ import threading
 import csv
 import pandas as pd
 import shutil
+import random  # 用于随机选择和生成随机噪声
 
 # 将MLEM模块所在目录添加到系统路径
 sys.path.append('tools_function')
@@ -29,13 +30,40 @@ response_matrix_file = r'response_matrix\RM.txt'  # 响应矩阵文件路径
 scale_matrix = [0.92472407, 1.27042858, 1.13919637, 1.05919509, 0.79361118, 0.79359671, 0.73485017, 1.21970569, 1.06066901, 1.12484355, 0.7123507, 1.28194591, 1.19946558, 0.82740347, 0.80909498, 0.81004271, 0.88254535, 1.01485386, 0.95916701, 0.87473748]
 
 # 设置MLEM参数
-iterations = 1000000
+iterations = 100
 
 # 是否保存对比图像
-save_figure = False
+save_figure = True
 
 # 采用CPU的最大核数，默认使用所有核
 workers = 999
+
+# 随机选择文件参数
+MAX_FILE = 20  # 最大处理文件数，设为None或者很大的数表示处理所有文件
+
+# 随机噪声参数
+RANDOM_SEED = 42  # 随机数种子，确保结果可复现，设为None表示使用系统时间作为种子
+RANDOM_SCALE = 0.5  # 随机噪声的幅度
+# 随机噪声生成器函数，可以改成其他分布
+def RANDOM_GENERATOR():
+    return random.random() 
+
+def add_random_noise(data, scale=RANDOM_SCALE, generator=RANDOM_GENERATOR):
+    """
+    为数据添加随机噪声
+    
+    Parameters:
+        data: numpy.ndarray, 原始数据
+        scale: float, 噪声幅度
+        generator: function, 噪声生成器函数
+        
+    Returns:
+        numpy.ndarray, 添加噪声后的数据
+    """
+    # 生成与数据相同形状的噪声
+    noise_factors = np.array([1.0 + scale * generator() for _ in range(len(data))])
+    # 应用噪声
+    return data * noise_factors
 
 def process_data_file(data_file, output_dir, response_matrix, save_figure):
     """处理单个数据文件并保存结果"""
@@ -58,6 +86,10 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure):
         
         # 对探测器响应进行缩放
         detector_response = detector_response * scale_matrix
+        
+        # 为探测器响应添加随机噪声
+        detector_response = add_random_noise(detector_response)
+        
         
         # 创建一个进度条用于显示迭代进度（position=1表示在主进度条上方）
         file_name = os.path.splitext(os.path.basename(data_file))[0]
@@ -256,6 +288,11 @@ def analyze_residuals(merged_csv_file, output_dir):
 
 def main():
     """主函数，处理所有数据文件"""
+    # 设置随机数种子
+    if RANDOM_SEED is not None:
+        random.seed(RANDOM_SEED)
+        np.random.seed(RANDOM_SEED)
+    
     # 在这里定义输出目录
     current_datetime = datetime.datetime.now().strftime('%y%m%d_%H%M%S') 
     output_dir = f'output_{current_datetime}'  # 结果保存目录
@@ -271,13 +308,35 @@ def main():
     response_matrix = load_response_matrix(response_matrix_file)
     
     # 搜索数据集/Data/目录下的所有txt文件
-    data_files = glob.glob(os.path.join(data_dir, 'Data', '**', '*.txt'), recursive=True)
+    all_data_files = glob.glob(os.path.join(data_dir, 'Data', '**', '*.txt'), recursive=True)
     
-    if not data_files:
+    if not all_data_files:
         raise Exception("未找到数据文件，请检查路径是否正确")
-
     
-    print(f"找到 {len(data_files)} 个数据文件，开始并行处理...")
+    # 随机选择指定数量的文件
+    total_files = len(all_data_files)
+    if MAX_FILE is not None and MAX_FILE < total_files:
+        data_files = random.sample(all_data_files, MAX_FILE)
+        file_percent = (MAX_FILE / total_files) * 100
+        print(f"从{total_files}个文件中随机选择了{MAX_FILE}个进行处理，选择比例: {file_percent:.2f}%")
+    else:
+        data_files = all_data_files
+        print(f"处理全部{total_files}个文件，选择比例: 100%")
+    
+    # 保存处理的参数信息和文件列表
+    with open(os.path.join(output_dir, "process_info.txt"), "w") as f:
+        f.write(f"处理时间: {current_datetime}\n")
+        f.write(f"总文件数: {total_files}\n")
+        f.write(f"处理文件数: {len(data_files)}\n")
+        f.write(f"处理比例: {(len(data_files) / total_files) * 100:.2f}%\n")
+        f.write(f"迭代次数: {iterations}\n")
+        f.write(f"随机数种子: {RANDOM_SEED}\n")
+        f.write(f"随机噪声幅度: {RANDOM_SCALE}\n")
+        f.write("\n处理的文件列表:\n")
+        for file in data_files:
+            f.write(f"{file}\n")
+    
+    print(f"开始并行处理{len(data_files)}个数据文件...")
     
     # 获取CPU核心数
     max_workers = os.cpu_count()
@@ -318,6 +377,7 @@ def main():
         print(f"- 残差统计数据: {stats_file}")
         print(f"- 残差分布直方图: {hist_path}")
         print(f"- 残差均值与标准差折线图: {errorbar_path}")
+        print(f"- 处理参数信息: {os.path.join(output_dir, 'process_info.txt')}")
 
 if __name__ == "__main__":
     main()  
