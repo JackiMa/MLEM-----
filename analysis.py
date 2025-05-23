@@ -29,7 +29,7 @@ response_matrix_file = r'response_matrix\RM.txt'  # 响应矩阵文件路径
 scale_matrix = [0.92472407, 1.27042858, 1.13919637, 1.05919509, 0.79361118, 0.79359671, 0.73485017, 1.21970569, 1.06066901, 1.12484355, 0.7123507, 1.28194591, 1.19946558, 0.82740347, 0.80909498, 0.81004271, 0.88254535, 1.01485386, 0.95916701, 0.87473748]
 
 # 设置MLEM参数
-iterations = 100000
+iterations = 5000
 
 # 是否保存对比图像
 save_figure = True
@@ -38,11 +38,11 @@ save_figure = True
 workers = 999
 
 # 随机选择文件参数
-MAX_FILE = 10  # 最大处理文件数，设为None或者很大的数表示处理所有文件
+MAX_FILE = 20  # 最大处理文件数，设为None或者很大的数表示处理所有文件
 
 # 随机噪声参数
 RANDOM_SEED = 42  # 随机数种子，确保结果可复现，设为None表示使用系统时间作为种子
-RANDOM_SCALE = 0.1  # 随机噪声的幅度
+RANDOM_SCALE = 0.01  # 随机噪声的幅度
 # 随机噪声生成器函数，可以改成其他分布
 def RANDOM_GENERATOR():
     return random.random() 
