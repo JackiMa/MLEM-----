@@ -183,53 +183,6 @@ def load_data(file_path):
     except Exception as e:
         raise ValueError(f"Error reading data file: {e}. File must be 6 lines with comma-separated values.")
 
-def plot_source_detector_data(energies, source, detector_ids, response, title=None, save_path=None):
-    """
-    Plot source image and detector response
-    
-    Parameters:
-        energies: list or array, energy values
-        source: list or array, source intensity at each energy
-        detector_ids: list or array, detector IDs
-        response: list or array, detector response
-        title: str, title of the plot
-        save_path: str, path to save the figure
-    """
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
-    
-    # Plot source image as line plot
-    x_energies = np.array(energies)
-    ax1.plot(x_energies, source, marker='o', linewidth=2, markersize=5)
-    ax1.set_xlabel('Energy (MeV)', fontsize=14)
-    ax1.set_ylabel('Particle Count', fontsize=14)
-    ax1.set_title('Source Spectrum', fontsize=16)
-    ax1.grid(True, linestyle='--', alpha=0.7)
-    
-    # Plot detector response as line plot
-    detector_indices = np.array([int(id) for id in detector_ids])
-    ax2.plot(detector_indices, response, marker='o', linewidth=2, markersize=5)
-    ax2.set_xlabel('Detector ID', fontsize=14)
-    ax2.set_ylabel('Response', fontsize=14)
-    ax2.set_title('Detector Response', fontsize=16)
-    ax2.grid(True, linestyle='--', alpha=0.7)
-    
-    # Use log scale for y-axis
-    ax1.set_yscale('log')
-    ax2.set_yscale('log')
-    
-    # Ensure integer ticks for detector IDs
-    ax2.set_xticks(detector_indices)
-    
-    if title:
-        fig.suptitle(title, fontsize=18)
-    
-    plt.tight_layout()
-    
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    
-    return fig, (ax1, ax2)
-
 def plot_reconstruction_comparison(energies, original, reconstructed, residuals, iterations, save_path=None):
     """
     Plot comparison between original source and reconstructed source
@@ -283,89 +236,52 @@ def plot_reconstruction_comparison(energies, original, reconstructed, residuals,
     return fig, (ax1, ax2, ax3)
 
 
-def create_test_data_file(file_path):
+def save_mlem_results_csv(save_path, data_name, iterations, residuals_per_energy, create_new=False):
     """
-    Create test data file with provided data
+    保存MLEM结果到CSV文件
     
     Parameters:
-        file_path: str, file path to save the test data
+        save_path: str, CSV文件保存路径
+        data_name: str, 原始数据文件名
+        iterations: int, 迭代次数
+        residuals_per_energy: numpy.ndarray, 每个能量点的残差
+        create_new: bool, 是否创建新文件(True)或追加到现有文件(False)
     """
-    # Create directory if it doesn't exist
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    # 确保目录存在
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
-    # Test data
-    energies = "0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0"
-    source = "555970244, 256520761, 88924034, 53650561, 18216985, 12910774, 7602436, 4304839, 3016221, 1578175, 1432844, 1145311, 1002308, 717179, 572209, 429884, 430611, 287546, 286964, 143256"
-    detector_ids = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20"
-    response = "1.21165594e+08, 2.42644711e+07, 8.99585788e+06, 5.07272598e+06, 2.86282202e+06, 1.51821225e+06, 9.78645970e+05, 7.55388110e+05, 4.24862611e+05, 2.92131669e+05, 2.14215746e+05, 1.48203664e+05, 8.53865258e+04, 4.95396685e+04, 3.55880238e+04, 1.79152878e+04, 1.25906882e+04, 5.95954381e+03, 4.56650649e+03, 4.31204757e+03"
+    # 获取当前时间
+    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     
-    # Write to file
-    with open(file_path, 'w') as f:
-        f.write(energies + '\n')
-        f.write(source + '\n')
-        f.write('\n\n')  # Empty lines 3-4
-        f.write(detector_ids + '\n')
-        f.write(response + '\n')
+    # 准备要写入的数据
+    row_data = [current_time, data_name, iterations]
+    row_data.extend(residuals_per_energy)
     
-    print(f"Test data file created at: {file_path}")
-
-def verify_response_matrix(response_matrix, source, detector_response, title="Response Matrix Verification", save_path=None):
-    """
-    Verify the response matrix by comparing the calculated detector response with the actual response
+    # 检查文件是否存在
+    file_exists = os.path.isfile(save_path)
     
-    Parameters:
-        response_matrix: numpy.ndarray, response matrix (M x N)
-            M rows (detectors), N columns (energy bins)
-        source: numpy.ndarray, source distribution (N)
-        detector_response: numpy.ndarray, actual detector response (M)
-        title: str, title of the plot
-        save_path: str, path to save the figure
+    # 如果需要创建新文件，但文件已存在，则清空文件
+    if create_new and file_exists:
+        mode = 'w'
+    else:
+        # 追加模式
+        mode = 'a'
+    
+    # 写入CSV文件
+    with open(save_path, mode, newline='') as f:
+        writer = csv.writer(f)
         
-    Returns:
-        calculated_response: numpy.ndarray, calculated detector response
-        relative_error: float, relative error between calculated and actual response
-    """
-    # Calculate expected detector response using response matrix and source
-    # Forward projection: detector_response = response_matrix × source
-    calculated_response = np.dot(response_matrix, source)
-    
-    # Calculate relative error
-    absolute_error = np.sum((calculated_response - detector_response) ** 2)
-    relative_error = absolute_error / np.sum(detector_response ** 2)
-    
-    # Create plot
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
-    
-    # Plot calculated vs actual detector response
-    detector_indices = np.arange(1, len(detector_response) + 1)
-    ax1.plot(detector_indices, detector_response, marker='o', linewidth=2, markersize=5, label='Actual Detector Response')
-    ax1.plot(detector_indices, calculated_response, marker='s', linewidth=2, markersize=5, label='Calculated Response (R·S)')
-    ax1.set_xlabel('Detector ID', fontsize=14)
-    ax1.set_ylabel('Response', fontsize=14)
-    ax1.set_title(f'Response Comparison (Rel. Error: {relative_error:.6e})', fontsize=16)
-    ax1.legend()
-    ax1.grid(True, linestyle='--', alpha=0.7)
-    ax1.set_yscale('log')
-    
-    # Plot relative difference
-    rel_diff = (calculated_response - detector_response) / detector_response * 100
-    ax2.plot(detector_indices, rel_diff, marker='o', linewidth=2, color='red')
-    ax2.axhline(y=0, color='black', linestyle='--')
-    ax2.set_xlabel('Detector ID', fontsize=14)
-    ax2.set_ylabel('Relative Difference (%)', fontsize=14)
-    ax2.set_title('Relative Difference', fontsize=16)
-    ax2.grid(True, linestyle='--', alpha=0.7)
-    
-    if title:
-        fig.suptitle(title, fontsize=18)
-    
-    plt.tight_layout()
-    
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    
-    print(f"Response matrix verification - Relative Error: {relative_error:.6e}")
-    return calculated_response, relative_error
+        # 如果需要创建新文件或文件不存在，写入表头
+        if create_new or not file_exists:
+            # 创建表头：Time, Data File, Iterations, eng1, eng2, ...
+            headers = ['Time', 'Data File', 'Iterations']
+            for i in range(len(residuals_per_energy)):
+                headers.append(f'eng{i+1}')
+            writer.writerow(headers)
+        
+        # 写入数据行
+        writer.writerow(row_data)
+
 
 def test_mlem():
     """
@@ -376,6 +292,83 @@ def test_mlem():
     4. Use MLEM algorithm for reconstruction
     5. Calculate and plot results
     """
+
+    
+    def plot_source_detector_data(energies, source, detector_ids, response, title=None, save_path=None):
+        """
+        Plot source image and detector response
+        
+        Parameters:
+            energies: list or array, energy values
+            source: list or array, source intensity at each energy
+            detector_ids: list or array, detector IDs
+            response: list or array, detector response
+            title: str, title of the plot
+            save_path: str, path to save the figure
+        """
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 7))
+        
+        # Plot source image as line plot
+        x_energies = np.array(energies)
+        ax1.plot(x_energies, source, marker='o', linewidth=2, markersize=5)
+        ax1.set_xlabel('Energy (MeV)', fontsize=14)
+        ax1.set_ylabel('Particle Count', fontsize=14)
+        ax1.set_title('Source Spectrum', fontsize=16)
+        ax1.grid(True, linestyle='--', alpha=0.7)
+        
+        # Plot detector response as line plot
+        detector_indices = np.array([int(id) for id in detector_ids])
+        ax2.plot(detector_indices, response, marker='o', linewidth=2, markersize=5)
+        ax2.set_xlabel('Detector ID', fontsize=14)
+        ax2.set_ylabel('Response', fontsize=14)
+        ax2.set_title('Detector Response', fontsize=16)
+        ax2.grid(True, linestyle='--', alpha=0.7)
+        
+        # Use log scale for y-axis
+        ax1.set_yscale('log')
+        ax2.set_yscale('log')
+        
+        # Ensure integer ticks for detector IDs
+        ax2.set_xticks(detector_indices)
+        
+        if title:
+            fig.suptitle(title, fontsize=18)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        return fig, (ax1, ax2)
+
+    def create_test_data_file(file_path):
+        """
+        Create test data file with provided data
+        
+        Parameters:
+            file_path: str, file path to save the test data
+        """
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        
+        # Test data
+        energies = "0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0"
+        source = "555970244, 256520761, 88924034, 53650561, 18216985, 12910774, 7602436, 4304839, 3016221, 1578175, 1432844, 1145311, 1002308, 717179, 572209, 429884, 430611, 287546, 286964, 143256"
+        detector_ids = "1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20"
+        response = "1.21165594e+08, 2.42644711e+07, 8.99585788e+06, 5.07272598e+06, 2.86282202e+06, 1.51821225e+06, 9.78645970e+05, 7.55388110e+05, 4.24862611e+05, 2.92131669e+05, 2.14215746e+05, 1.48203664e+05, 8.53865258e+04, 4.95396685e+04, 3.55880238e+04, 1.79152878e+04, 1.25906882e+04, 5.95954381e+03, 4.56650649e+03, 4.31204757e+03"
+        
+        # Write to file
+        with open(file_path, 'w') as f:
+            f.write(energies + '\n')
+            f.write(source + '\n')
+            f.write('\n\n')  # Empty lines 3-4
+            f.write(detector_ids + '\n')
+            f.write(response + '\n')
+        
+        print(f"Test data file created at: {file_path}")
+
+
+
     # Create test directory
     test_dir = os.path.join('tools_function', 'MLEM_test')
     os.makedirs(test_dir, exist_ok=True)
@@ -425,14 +418,7 @@ def test_mlem():
         
         raise ValueError("Response matrix dimensions do not match expected dimensions")
     
-    # Verify response matrix accuracy
-    calculated_response_T, rel_error_T = verify_response_matrix(
-        response_matrix,
-        particle_counts,
-        detector_response,
-        title="Response Matrix Verification",
-        save_path=os.path.join(test_dir, 'response_matrix_verification.png')
-    )
+
     
     # Plot source and detector data
     plot_source_detector_data(
@@ -491,52 +477,6 @@ def test_mlem():
     # Save MLEM results to CSV
     save_mlem_results_csv(os.path.join(test_dir, 'MLEM_results.csv'), 'test_data', iterations, residuals)
 
-
-def save_mlem_results_csv(save_path, data_name, iterations, residuals_per_energy, create_new=False):
-    """
-    保存MLEM结果到CSV文件
-    
-    Parameters:
-        save_path: str, CSV文件保存路径
-        data_name: str, 原始数据文件名
-        iterations: int, 迭代次数
-        residuals_per_energy: numpy.ndarray, 每个能量点的残差
-        create_new: bool, 是否创建新文件(True)或追加到现有文件(False)
-    """
-    # 确保目录存在
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    
-    # 获取当前时间
-    current_time = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    
-    # 准备要写入的数据
-    row_data = [current_time, data_name, iterations]
-    row_data.extend(residuals_per_energy)
-    
-    # 检查文件是否存在
-    file_exists = os.path.isfile(save_path)
-    
-    # 如果需要创建新文件，但文件已存在，则清空文件
-    if create_new and file_exists:
-        mode = 'w'
-    else:
-        # 追加模式
-        mode = 'a'
-    
-    # 写入CSV文件
-    with open(save_path, mode, newline='') as f:
-        writer = csv.writer(f)
-        
-        # 如果需要创建新文件或文件不存在，写入表头
-        if create_new or not file_exists:
-            # 创建表头：Time, Data File, Iterations, eng1, eng2, ...
-            headers = ['Time', 'Data File', 'Iterations']
-            for i in range(len(residuals_per_energy)):
-                headers.append(f'eng{i+1}')
-            writer.writerow(headers)
-        
-        # 写入数据行
-        writer.writerow(row_data)
 
 if __name__ == "__main__":
     test_mlem()
