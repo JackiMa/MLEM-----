@@ -23,7 +23,7 @@ def load_response_matrix(response_matrix_file):
     response_matrix = response_matrix.T
     return response_matrix
 
-def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False, progress_bar=None, early_stop=False, tolerance=1e-6, no_improvement_count=20):
+def mlem_algorithm(response_matrix, measure_data, source_data, iterations=100, verbose=False, progress_bar=None, early_stop=False, tolerance=1e-6, no_improvement_count=20):
     """
     MLEM algorithm implementation based on the standard formula
     
@@ -33,6 +33,7 @@ def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False,
         response_matrix: numpy.ndarray, response matrix (M x N)
             M rows (detectors), N columns (energy bins)
         measure_data: numpy.ndarray, detector measurements (M)
+        source_data: numpy.ndarray, source data (N)
         iterations: int, number of iterations
         verbose: bool, whether to output detailed information
         progress_bar: tqdm progress bar, to show progress within iterations
@@ -43,7 +44,8 @@ def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False,
     Returns:
         # lambda_history: history of results for each iteration (too many memory used, not used now)
         reconstructed: final reconstruction results
-        residuals: sum of squared residuals for each iteration
+        detector_response_residuals: sum of squared residuals for each iteration
+        reconstructed_relative_source_residuals: sum of squared residuals for each iteration
     """
     # Get shape of response matrix
     M, N = response_matrix.shape
@@ -57,8 +59,9 @@ def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False,
     lambda_n = np.ones(N) * (total_counts / N)
     
     # Store sum of squared residuals for each iteration
-    residuals = np.zeros(iterations)
-    
+    detector_response_residuals = np.zeros(iterations)
+    reconstructed_relative_source_residuals = np.zeros(iterations)
+
     # Pre-calculate sum of response matrix columns (denominator part)
     sum_c_ij = np.sum(response_matrix, axis=0)  # ∑_i c_ij
     
@@ -87,17 +90,22 @@ def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False,
     for n in iter_range:
         # Forward projection (predicted measurements)
         # detector_response = response_matrix × source
-        predicted = np.dot(response_matrix, lambda_n)  # ∑_k(c_ik * λ_k^n)
+        detector_response_predicted = np.dot(response_matrix, lambda_n)  # ∑_k(c_ik * λ_k^n)
         
         # Calculate residual
-        residual = np.sum((predicted - measure_data) ** 2)
-        residuals[n] = residual
+        detector_response_residual = np.sum((detector_response_predicted - measure_data) ** 2)
+        detector_response_residuals[n] = detector_response_residual
+
+        # 如果source_data==0，那么设置为1，避免除以0错误
+        source_data[source_data == 0] = 1
+        reconstructed_relative_source_residual = np.sum(((lambda_n - source_data)/source_data) ** 2)
+        reconstructed_relative_source_residuals[n] = reconstructed_relative_source_residual
         
         # Check for early stopping
         if early_stop:
-            if residual < best_residual * (1 - tolerance):
+            if detector_response_residual < best_residual * (1 - tolerance):
                 # We have improvement
-                best_residual = residual
+                best_residual = detector_response_residual
                 no_improvement_counter = 0
                 # Save current result as best
                 reconstructed = lambda_n.copy()
@@ -109,11 +117,11 @@ def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False,
                 if verbose:
                     print(f"Early stopping at iteration {n+1}, no improvement for {no_improvement_count} iterations")
                 # Truncate residuals array
-                residuals = residuals[:n+1]
+                detector_response_residuals = detector_response_residuals[:n+1]
                 break
         
         # Calculate correction factors
-        ratio = measure_data / (predicted + epsilon)  # f_i / ∑_k(c_ik * λ_k^n)
+        ratio = measure_data / (detector_response_predicted + epsilon)  # f_i / ∑_k(c_ik * λ_k^n)
         
         # Backward projection and update
         # Back-projection: R^T × ratio
@@ -123,7 +131,7 @@ def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False,
         lambda_n = lambda_n * correction / (sum_c_ij + epsilon)  # λ_j^(n+1) = (λ_j^n / ∑_i c_ij) * correction
         
         if verbose and (n + 1) % 100 == 0:
-            print(f"Iteration {n+1}, Sum of squared residuals: {residual:.6e}")
+            print(f"Iteration {n+1}, Sum of squared residuals: {detector_response_residual:.6e}")
     
     # If we didn't stop early, use the final lambda_n
     if not early_stop or no_improvement_counter < no_improvement_count:
@@ -133,7 +141,7 @@ def mlem_algorithm(response_matrix, measure_data, iterations=100, verbose=False,
     if verbose:
         print(f"MLEM algorithm completed, time used: {end_time - start_time:.2f} seconds")
     
-    return reconstructed, residuals
+    return reconstructed, detector_response_residuals, reconstructed_relative_source_residuals
 
 def load_data(file_path):
     """
@@ -183,7 +191,7 @@ def load_data(file_path):
     except Exception as e:
         raise ValueError(f"Error reading data file: {e}. File must be 6 lines with comma-separated values.")
 
-def plot_reconstruction_comparison(energies, original, reconstructed, residuals, iterations, save_path=None):
+def plot_reconstruction_comparison(energies, original, reconstructed, detector_response_residuals, reconstructed_relative_source_residuals, iterations, save_path=None):
     """
     Plot comparison between original source and reconstructed source
     
@@ -191,11 +199,12 @@ def plot_reconstruction_comparison(energies, original, reconstructed, residuals,
         energies: list or array, energy values
         original: list or array, original source
         reconstructed: list or array, reconstructed source
-        residuals: list or array, residuals for each iteration
+        detector_response_residuals: list or array, residuals for each iteration
+        reconstructed_relative_source_residuals: list or array, residuals for each iteration
         iterations: int, number of iterations
         save_path: str, path to save the figure
     """
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(20, 7))
+    fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(20, 7))
     
     # Plot original vs reconstructed as line plots
     x_energies = np.array(energies)
@@ -208,22 +217,30 @@ def plot_reconstruction_comparison(energies, original, reconstructed, residuals,
     ax1.grid(True, linestyle='--', alpha=0.7)
     ax1.set_yscale('log')
     
-    # Plot residuals
-    ax2.plot(range(1, iterations + 1), residuals, marker='o', markersize=3)
+    # Plot detector response residuals
+    ax2.plot(range(1, iterations + 1), detector_response_residuals, marker='o', markersize=3)
     ax2.set_xlabel('Iteration Number', fontsize=14)
     ax2.set_ylabel('Sum of Squared Residuals', fontsize=14)
-    ax2.set_title('Residuals vs Iteration', fontsize=16)
+    ax2.set_title('Detector Response Residuals', fontsize=16)
     ax2.grid(True, linestyle='--', alpha=0.7)
     ax2.set_yscale('log')
+
+    # Plot reconstructed relative source residuals
+    ax3.plot(range(1, iterations + 1), reconstructed_relative_source_residuals, marker='o', markersize=3)
+    ax3.set_xlabel('Iteration Number', fontsize=14)
+    ax3.set_ylabel('Sum of Squared Residuals', fontsize=14)
+    ax3.set_title('Recon- Relative Source Residuals', fontsize=16)
+    ax3.grid(True, linestyle='--', alpha=0.7)
+    ax3.set_yscale('log')
     
     # Plot relative difference between reconstructed and original
     rel_diff = (reconstructed - original) / original * 100
-    ax3.plot(x_energies, rel_diff, marker='o', linewidth=2, color='red')
-    ax3.axhline(y=0, color='black', linestyle='--')
-    ax3.set_xlabel('Energy (MeV)', fontsize=14)
-    ax3.set_ylabel('Relative Difference (%)', fontsize=14)
-    ax3.set_title('Relative Difference between Reconstructed and Original', fontsize=16)
-    ax3.grid(True, linestyle='--', alpha=0.7)
+    ax4.plot(x_energies, rel_diff, marker='o', linewidth=2, color='red')
+    ax4.axhline(y=0, color='black', linestyle='--')
+    ax4.set_xlabel('Energy (MeV)', fontsize=14)
+    ax4.set_ylabel('Relative Difference (%)', fontsize=14)
+    ax4.set_title('Relative Diff- between Recon- and Source', fontsize=16)
+    ax4.grid(True, linestyle='--', alpha=0.7)
     
     plt.tight_layout()
     
@@ -233,10 +250,10 @@ def plot_reconstruction_comparison(energies, original, reconstructed, residuals,
     # 关闭当前图形，释放内存
     plt.close('all')
 
-    return fig, (ax1, ax2, ax3)
+    return fig, (ax1, ax2, ax3, ax4)
 
 
-def save_mlem_results_csv(save_path, data_name, iterations, residuals_per_energy, create_new=False):
+def save_mlem_results_csv(save_path, data_name, iterations, recon_relative_residuals_per_energy, create_new=False):
     """
     保存MLEM结果到CSV文件
     
@@ -244,7 +261,7 @@ def save_mlem_results_csv(save_path, data_name, iterations, residuals_per_energy
         save_path: str, CSV文件保存路径
         data_name: str, 原始数据文件名
         iterations: int, 迭代次数
-        residuals_per_energy: numpy.ndarray, 每个能量点的残差
+        recon_relative_residuals_per_energy: numpy.ndarray, 每个能量点的残差
         create_new: bool, 是否创建新文件(True)或追加到现有文件(False)
     """
     # 确保目录存在
@@ -255,7 +272,7 @@ def save_mlem_results_csv(save_path, data_name, iterations, residuals_per_energy
     
     # 准备要写入的数据
     row_data = [current_time, data_name, iterations]
-    row_data.extend(residuals_per_energy)
+    row_data.extend(recon_relative_residuals_per_energy)
     
     # 检查文件是否存在
     file_exists = os.path.isfile(save_path)
@@ -275,7 +292,7 @@ def save_mlem_results_csv(save_path, data_name, iterations, residuals_per_energy
         if create_new or not file_exists:
             # 创建表头：Time, Data File, Iterations, eng1, eng2, ...
             headers = ['Time', 'Data File', 'Iterations']
-            for i in range(len(residuals_per_energy)):
+            for i in range(len(recon_relative_residuals_per_energy)):
                 headers.append(f'eng{i+1}')
             writer.writerow(headers)
         

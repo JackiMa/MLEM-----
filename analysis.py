@@ -6,7 +6,6 @@ import sys
 import glob
 import concurrent.futures
 from tqdm import tqdm # 进度条
-from tqdm.auto import trange  # 进度条
 import datetime
 import threading
 import csv
@@ -30,7 +29,7 @@ response_matrix_file = r'response_matrix\RM.txt'  # 响应矩阵文件路径
 scale_matrix = [0.92472407, 1.27042858, 1.13919637, 1.05919509, 0.79361118, 0.79359671, 0.73485017, 1.21970569, 1.06066901, 1.12484355, 0.7123507, 1.28194591, 1.19946558, 0.82740347, 0.80909498, 0.81004271, 0.88254535, 1.01485386, 0.95916701, 0.87473748]
 
 # 设置MLEM参数
-iterations = 100
+iterations = 100000
 
 # 是否保存对比图像
 save_figure = True
@@ -39,11 +38,11 @@ save_figure = True
 workers = 999
 
 # 随机选择文件参数
-MAX_FILE = 20  # 最大处理文件数，设为None或者很大的数表示处理所有文件
+MAX_FILE = 10  # 最大处理文件数，设为None或者很大的数表示处理所有文件
 
 # 随机噪声参数
 RANDOM_SEED = 42  # 随机数种子，确保结果可复现，设为None表示使用系统时间作为种子
-RANDOM_SCALE = 0.5  # 随机噪声的幅度
+RANDOM_SCALE = 0.1  # 随机噪声的幅度
 # 随机噪声生成器函数，可以改成其他分布
 def RANDOM_GENERATOR():
     return random.random() 
@@ -78,10 +77,10 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure):
         thread_id = threading.get_ident()
         
         # 读取数据文件
-        particle_energies, particle_counts, detector_ids, detector_response = load_data(data_file)
+        source_particle_energies, source_particle_counts, detector_ids, detector_response = load_data(data_file)
         
         # 将数据转换为numpy数组
-        particle_counts = np.array(particle_counts)
+        source_particle_counts = np.array(source_particle_counts)
         detector_response = np.array(detector_response)
         
         # 对探测器响应进行缩放
@@ -103,9 +102,10 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure):
         )
         
         # 运行MLEM算法
-        reconstructed, residuals = mlem_algorithm(
+        reconstructed, detector_response_residuals, reconstructed_relative_source_residuals = mlem_algorithm(
             response_matrix, 
             detector_response,
+            source_particle_counts,
             iterations=iterations,
             verbose=False,
             progress_bar=inner_pbar,
@@ -118,7 +118,9 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure):
         inner_pbar.close()
         
         # 计算每个能量点的相对残差
-        residuals_per_energy = ((reconstructed - particle_counts)/particle_counts) ** 2
+        # 如果有初始值==0，那么设置为1，避免除以0错误
+        source_particle_counts[source_particle_counts == 0] = 1  # 将0值替换为1
+        recon_relative_residuals_per_energy = ((reconstructed - source_particle_counts)/source_particle_counts)
         
         # 获取文件名（不包含路径和扩展名）
         file_name = os.path.splitext(os.path.basename(data_file))[0]
@@ -127,27 +129,28 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure):
         if save_figure:
             figure_path = os.path.join(reconstruction_figure_dir, f"{file_name}.png")
             plot_reconstruction_comparison(
-                particle_energies,
-                particle_counts,
+                source_particle_energies,
+                source_particle_counts,
                 reconstructed,
-                residuals,
-                len(residuals),  # 使用实际迭代次数
+                detector_response_residuals,
+                reconstructed_relative_source_residuals,
+                len(detector_response_residuals),  # 使用实际迭代次数
                 save_path=figure_path
             )
         
         # 保存重建数据
         data_path = os.path.join(reconstruction_data_dir, f"{file_name}.txt")
         with open(data_path, 'w') as f:
-            for energy, value in zip(particle_energies, reconstructed):
+            for energy, value in zip(source_particle_energies, reconstructed):
                 f.write(f"{energy} {value}\n")
         
         # 保存MLEM结果到线程特定的CSV文件
         csv_path = os.path.join(output_dir, f"MLEM_{thread_id}.csv")
-        save_mlem_results_csv(csv_path, file_name, len(residuals), residuals_per_energy)
+        save_mlem_results_csv(csv_path, file_name, len(recon_relative_residuals_per_energy), recon_relative_residuals_per_energy)
         
         return f"完成: {os.path.basename(data_file)}"
     except Exception as e:
-        return f"错误 {os.path.basename(data_file)}: {str(e)}"
+        raise Exception(f"错误 {os.path.basename(data_file)}: {str(e)}")
 
 def merge_csv_files(output_dir):
     """合并所有线程的CSV文件到一个主文件，然后删除原始文件"""
@@ -251,7 +254,7 @@ def analyze_residuals(merged_csv_file, output_dir):
     
     plt.xlabel('Residual Value', fontsize=14)
     plt.ylabel('Frequency', fontsize=14)
-    plt.title('Residual Distribution for Each Energy Point', fontsize=16)
+    plt.title('Source Recon-residual Distribution for Each Energy', fontsize=16)
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.7)
     
@@ -271,7 +274,7 @@ def analyze_residuals(merged_csv_file, output_dir):
     
     plt.xlabel('Energy Point Index', fontsize=14)
     plt.ylabel('Mean Residual Value', fontsize=14)
-    plt.title('Mean Residual with Standard Deviation Error Bars for Each Energy Point', fontsize=16)
+    plt.title('Mean Source Recon-residual with Standard Deviation Error Bars for Each Energy Point', fontsize=16)
     plt.xticks(x_values, energy_labels, rotation=45)
     plt.grid(True, linestyle='--', alpha=0.7)
     
