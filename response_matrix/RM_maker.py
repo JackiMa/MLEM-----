@@ -1,6 +1,10 @@
 import os
 import numpy as np
 import glob
+import time
+
+# 计个时
+start_time = time.time()
 
 # 定义路径
 DATA_PATH = os.path.join('数据集', 'JiTai_Data')
@@ -167,3 +171,7 @@ if final_response:
     print(f"处理完成! 共处理了 {len(final_response)}/{len(energy_folders)} 个能量文件夹")
 else:
     print("警告: 没有处理到任何有效的数据文件!")
+
+# 计算时间
+end_time = time.time()
+print(f"程序运行时间: {end_time - start_time} 秒")

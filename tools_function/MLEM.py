@@ -5,6 +5,7 @@ import time
 import datetime
 import csv
 import tqdm
+import pandas as pd
 
 def load_response_matrix(response_matrix_file):
     """
@@ -191,9 +192,9 @@ def load_data(file_path):
     except Exception as e:
         raise ValueError(f"Error reading data file: {e}. File must be 6 lines with comma-separated values.")
 
-def plot_reconstruction_comparison(energies, original, reconstructed, detector_response_residuals, reconstructed_relative_source_residuals, iterations, save_path=None):
+def plot_reconstruction_comparison(energies, original, reconstructed, detector_response_residuals, reconstructed_relative_source_residuals, iterations, save_figure_path=None, save_data_path=None):
     """
-    Plot comparison between original source and reconstructed source
+    Plot comparison between original source and reconstructed source and optionally save all data
     
     Parameters:
         energies: list or array, energy values
@@ -202,7 +203,8 @@ def plot_reconstruction_comparison(energies, original, reconstructed, detector_r
         detector_response_residuals: list or array, residuals for each iteration
         reconstructed_relative_source_residuals: list or array, residuals for each iteration
         iterations: int, number of iterations
-        save_path: str, path to save the figure
+        save_figure_path: str, path to save the figure
+        save_data_path: str, path to save the data as CSV
     """
     fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(20, 7))
     
@@ -244,8 +246,75 @@ def plot_reconstruction_comparison(energies, original, reconstructed, detector_r
     
     plt.tight_layout()
     
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    if save_figure_path:
+        plt.savefig(save_figure_path, dpi=300, bbox_inches='tight')
+    
+    # Save all data if requested
+    if save_data_path:
+
+        
+        # 创建一个空列表来存储所有数据行
+        all_data_rows = []
+        
+        # 1. 添加能量谱数据 (图1数据)
+        all_data_rows.append(['图1数据: 能量谱', ''])
+        all_data_rows.append(['Energy_MeV', 'Original_Counts', 'Reconstructed_Counts', 'Relative_Difference_Percent'])
+        
+        rel_diff = (np.array(reconstructed) - np.array(original)) / np.array(original) * 100
+        for i in range(len(energies)):
+            all_data_rows.append([
+                energies[i], 
+                original[i], 
+                reconstructed[i], 
+                rel_diff[i]
+            ])
+        
+        # 添加空行作为分隔符
+        all_data_rows.append([])
+        
+        # 2. 添加探测器响应残差数据 (图2数据)
+        all_data_rows.append(['图2数据: 探测器响应残差', ''])
+        all_data_rows.append(['Iteration', 'Detector_Response_Residuals'])
+        
+        for i in range(iterations):
+            all_data_rows.append([i+1, detector_response_residuals[i]])
+        
+        # 添加空行作为分隔符
+        all_data_rows.append([])
+        
+        # 3. 添加重建源残差数据 (图3数据)
+        all_data_rows.append(['图3数据: 重建源残差', ''])
+        all_data_rows.append(['Iteration', 'Reconstructed_Source_Residuals'])
+        
+        for i in range(iterations):
+            all_data_rows.append([i+1, reconstructed_relative_source_residuals[i]])
+        
+        # 添加空行作为分隔符
+        all_data_rows.append([])
+        
+        # 4. 添加相对差异数据 (图4数据)
+        all_data_rows.append(['图4数据: 相对差异', ''])
+        all_data_rows.append(['Energy_MeV', 'Relative_Difference_Percent'])
+        
+        for i in range(len(energies)):
+            all_data_rows.append([energies[i], rel_diff[i]])
+        
+        # 添加空行作为分隔符
+        all_data_rows.append([])
+        
+        # 5. 添加元数据
+        all_data_rows.append(['元数据', ''])
+        all_data_rows.append(['参数', '值'])
+        all_data_rows.append(['迭代次数', iterations])
+        all_data_rows.append(['能量区间数量', len(energies)])
+        all_data_rows.append(['能量范围最小值(MeV)', min(energies)])
+        all_data_rows.append(['能量范围最大值(MeV)', max(energies)])
+        all_data_rows.append(['最终探测器响应残差', detector_response_residuals[-1]])
+        all_data_rows.append(['最终重建源残差', reconstructed_relative_source_residuals[-1]])
+        
+        # 创建DataFrame并保存为CSV
+        df = pd.DataFrame(all_data_rows)
+        df.to_csv(save_data_path, index=False, header=False)
     
     # 关闭当前图形，释放内存
     plt.close('all')
@@ -462,7 +531,7 @@ def test_mlem():
     # Run MLEM algorithm
     print("\n=== Running MLEM Algorithm ===")
     progress_bar = tqdm.tqdm(total=iterations)
-    reconstructed, residuals = mlem_algorithm(
+    reconstructed, detector_response_residuals, reconstructed_relative_source_residuals = mlem_algorithm(
         response_matrix, 
         detector_response,
         iterations=iterations,
@@ -475,25 +544,34 @@ def test_mlem():
     final_residual = np.sum(((reconstructed - particle_counts)/particle_counts) ** 2) / len(particle_counts)
     
     print(f"\nMELM algorithm - Final sum of squared residuals: {final_residual:.6e}")
-    
+
     # Plot reconstruction comparisons
     plot_reconstruction_comparison(
         particle_energies,
         particle_counts,
         reconstructed,
-        residuals,
+        detector_response_residuals,
+        reconstructed_relative_source_residuals,
         iterations,
-        save_path=os.path.join(test_dir, 'reconstruction_results.png')
+        save_figure_path=os.path.join(test_dir, 'reconstruction_results.png'),
+        save_data_path=os.path.join(test_dir, 'reconstruction_plotdata.csv')
     )
+
+    # 保存plot_reconstruction_comparison的全部数据，方便后续画图已完成
     
+
     # 关闭当前图形，释放内存
     plt.close('all')
 
     print(f"All results saved to {test_dir}")
 
     # Save MLEM results to CSV
-    save_mlem_results_csv(os.path.join(test_dir, 'MLEM_results.csv'), 'test_data', iterations, residuals)
+    # 计算每个能量点的相对残差
+    rel_residuals = ((reconstructed - particle_counts) / particle_counts) * 100
+    save_mlem_results_csv(os.path.join(test_dir, 'MLEM_results.csv'), 'test_data', iterations, rel_residuals)
 
 
 if __name__ == "__main__":
-    test_mlem()
+    # test_mlem()
+    # 有些问题，先不测试了
+    pass

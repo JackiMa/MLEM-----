@@ -34,6 +34,9 @@ iterations = 5000
 # 是否保存对比图像
 save_figure = True
 
+# 是否保存重建数据（能谱、残差等）
+save_data = True
+
 # 采用CPU的最大核数，默认使用所有核
 workers = 999
 
@@ -49,48 +52,53 @@ def RANDOM_GENERATOR():
 
 def add_random_noise(data, scale=RANDOM_SCALE, generator=RANDOM_GENERATOR):
     """
-    为数据添加随机噪声
+    Add random noise to data
     
     Parameters:
-        data: numpy.ndarray, 原始数据
-        scale: float, 噪声幅度
-        generator: function, 噪声生成器函数
+        data: numpy.ndarray, original data
+        scale: float, noise amplitude
+        generator: function, noise generator function
         
     Returns:
-        numpy.ndarray, 添加噪声后的数据
+        numpy.ndarray, data with noise added
     """
-    # 生成与数据相同形状的噪声
+    # Import numpy locally to ensure it's available in multiprocessing
+    import numpy as np
+    
+    # Generate noise with the same shape as data
     noise_factors = np.array([1.0 + scale * generator() for _ in range(len(data))])
-    # 应用噪声
+    # Apply noise
     return data * noise_factors
 
-def process_data_file(data_file, output_dir, response_matrix, save_figure):
-    """处理单个数据文件并保存结果"""
+def process_data_file(data_file, output_dir, response_matrix, save_figure, save_data=False):
+    """Process a single data file and save results"""
+
+    
     try:
-        # 确保输出目录存在
+        # Ensure output directories exist
         reconstruction_figure_dir = os.path.join(output_dir, 'reconstruction_figure')
         reconstruction_data_dir = os.path.join(output_dir, 'reconstruction_data')
         os.makedirs(reconstruction_figure_dir, exist_ok=True)
         os.makedirs(reconstruction_data_dir, exist_ok=True)
         
-        # 获取当前线程ID
+        # Get current thread ID
         thread_id = threading.get_ident()
         
-        # 读取数据文件
+        # Read data file
         source_particle_energies, source_particle_counts, detector_ids, detector_response = load_data(data_file)
         
-        # 将数据转换为numpy数组
+        # Convert data to numpy arrays
         source_particle_counts = np.array(source_particle_counts)
         detector_response = np.array(detector_response)
         
-        # 对探测器响应进行缩放
+        # Scale detector response
         detector_response = detector_response * scale_matrix
         
-        # 为探测器响应添加随机噪声
+        # Add random noise to detector response
         detector_response = add_random_noise(detector_response)
         
         
-        # 创建一个进度条用于显示迭代进度（position=1表示在主进度条上方）
+        # Create a progress bar for iteration progress (position=0 means at the top)
         file_name = os.path.splitext(os.path.basename(data_file))[0]
         inner_pbar = tqdm(
             range(iterations), 
@@ -101,7 +109,7 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure):
             bar_format='{l_bar}{bar:30}{r_bar}'
         )
         
-        # 运行MLEM算法
+        # Run MLEM algorithm
         reconstructed, detector_response_residuals, reconstructed_relative_source_residuals = mlem_algorithm(
             response_matrix, 
             detector_response,
@@ -109,141 +117,143 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure):
             iterations=iterations,
             verbose=False,
             progress_bar=inner_pbar,
-            early_stop=False,       # 启用提前停止条件
-            tolerance=1e-6,        # 相对改进容差
-            no_improvement_count=20 # 无改进次数阈值
+            early_stop=False,       # Enable early stopping
+            tolerance=1e-6,        # Relative improvement tolerance
+            no_improvement_count=20 # No improvement threshold count
         )
         
-        # 关闭内部进度条
+        # Close inner progress bar
         inner_pbar.close()
         
-        # 计算每个能量点的相对残差
-        # 如果有初始值==0，那么设置为1，避免除以0错误
-        source_particle_counts[source_particle_counts == 0] = 1  # 将0值替换为1
+        # Calculate relative residuals for each energy point
+        # If initial value is 0, set to 1 to avoid division by zero
+        source_particle_counts[source_particle_counts == 0] = 1  # Replace 0 values with 1
         recon_relative_residuals_per_energy = ((reconstructed - source_particle_counts)/source_particle_counts)
         
-        # 获取文件名（不包含路径和扩展名）
+        # Get file name (without path and extension)
         file_name = os.path.splitext(os.path.basename(data_file))[0]
         
-        # 绘制重建结果对比图并保存
+        # Plot and save reconstruction comparison
         if save_figure:
             figure_path = os.path.join(reconstruction_figure_dir, f"{file_name}.png")
+            plotdata_path = os.path.join(reconstruction_figure_dir, f"{file_name}_plotdata.csv")
             plot_reconstruction_comparison(
                 source_particle_energies,
                 source_particle_counts,
                 reconstructed,
                 detector_response_residuals,
                 reconstructed_relative_source_residuals,
-                len(detector_response_residuals),  # 使用实际迭代次数
-                save_path=figure_path
+                len(detector_response_residuals),  # Use actual iteration count
+                save_figure_path=figure_path,
+                save_data_path=plotdata_path if save_data else None  # Control data saving with parameter
             )
         
-        # 保存重建数据
+        # Save reconstruction data
         data_path = os.path.join(reconstruction_data_dir, f"{file_name}.txt")
         with open(data_path, 'w') as f:
             for energy, value in zip(source_particle_energies, reconstructed):
                 f.write(f"{energy} {value}\n")
         
-        # 保存MLEM结果到线程特定的CSV文件
+        # Save MLEM results to thread-specific CSV file
         csv_path = os.path.join(output_dir, f"MLEM_{thread_id}.csv")
         save_mlem_results_csv(csv_path, file_name, len(recon_relative_residuals_per_energy), recon_relative_residuals_per_energy)
         
-        return f"完成: {os.path.basename(data_file)}"
+        return f"Completed: {os.path.basename(data_file)}"
     except Exception as e:
-        raise Exception(f"错误 {os.path.basename(data_file)}: {str(e)}")
+        raise Exception(f"Error {os.path.basename(data_file)}: {str(e)}")
 
 def merge_csv_files(output_dir):
-    """合并所有线程的CSV文件到一个主文件，然后删除原始文件"""
-    # 查找所有MLEM_*.csv文件
+    """Merge all thread CSV files into a master file, then delete the original files"""
+    # Find all MLEM_*.csv files
     csv_files = glob.glob(os.path.join(output_dir, "MLEM_*.csv"))
     
     if not csv_files:
-        print("未找到CSV结果文件")
+        print("No CSV result files found")
         return
     
-    # 输出合并文件路径
+    # Output merged file path
     merged_file = os.path.join(output_dir, "MLEM_results_merged.csv")
     
-    # 合并所有CSV文件
+    # Merge all CSV files
     with open(merged_file, 'w', newline='') as outfile:
-        # 创建CSV写入器
+        # Create CSV writer
         writer = csv.writer(outfile)
         
-        # 写入表头（从第一个文件获取）
+        # Write header (from first file)
         with open(csv_files[0], 'r') as first_file:
             reader = csv.reader(first_file)
             header = next(reader)
             writer.writerow(header)
         
-        # 逐个处理文件，写入数据行（跳过表头）
+        # Process each file, write data rows (skip header)
         for file in csv_files:
             with open(file, 'r') as infile:
                 reader = csv.reader(infile)
-                next(reader)  # 跳过表头
+                next(reader)  # Skip header
                 for row in reader:
                     writer.writerow(row)
     
-    # 删除原始CSV文件
+    # Delete original CSV files
     for file in csv_files:
         os.remove(file)
     
-    print(f"CSV文件已合并到: {merged_file}，原始CSV文件已删除")
+    print(f"CSV files merged to: {merged_file}, original CSV files deleted")
     
     return merged_file
 
 def analyze_residuals(merged_csv_file, output_dir):
-    """分析合并后的CSV文件，生成统计数据和直方图"""
-    # 读取CSV文件
+    """Analyze merged CSV file, generate statistics and histograms"""
+    # Read CSV file
     df = pd.read_csv(merged_csv_file)
     
-    # 获取能量点列（eng1, eng2, ...）
+    # Get energy point columns (eng1, eng2, ...)
     energy_columns = [col for col in df.columns if col.startswith('eng')]
     
     if not energy_columns:
-        print("CSV文件中未找到能量点数据")
+        print("No energy point data found in CSV file")
         return
     
-    # 创建统计结果的路径
+    # Create statistics result path
     stats_file = os.path.join(output_dir, "energy_residual_statistics.csv")
     
     # ---------------------------------
-    # 在这里修改，需要保存哪些数据
+    # Modify here to save different data
     # ---------------------------------
-    # 准备统计数据
+    # Prepare statistics data
     stats_data = {
         'Statistic': ['Count', 'Mean', 'Variance', 'Std', 'Min', 'Max']
     }
     
-    # 为每个能量点计算统计数据
+    # Calculate statistics for each energy point
     means = []
     stds = []
     energy_labels = []
     
     for col in energy_columns:
         values = df[col].values
-        mean_val = np.mean(values)
+        mean_val = np.mean(abs(values)) # Take absolute values before mean to avoid positive/negative cancellation
         var_val = np.var(values)
         std_val = np.std(values)
         
         stats_data[col] = [
-            len(values),                  # 数量
-            mean_val,                     # 均值
-            var_val,                      # 方差
-            std_val,                      # 标准差
-            np.min(values),               # 最小值
-            np.max(values)                # 最大值
+            len(values),                  # Count
+            mean_val,                     # Mean
+            var_val,                      # Variance
+            std_val,                      # Standard deviation
+            np.min(values),               # Minimum
+            np.max(values)                # Maximum
         ]
         
-        # 收集用于绘制折线图的数据
+        # Collect data for line plot
         means.append(mean_val)
         stds.append(std_val)
         energy_labels.append(col)
     
-    # 保存统计数据到CSV
+    # Save statistics data to CSV
     stats_df = pd.DataFrame(stats_data)
     stats_df.to_csv(stats_file, index=False)
     
-    print(f"残差统计数据已保存到: {stats_file}")
+    print(f"Residual statistics saved to: {stats_file}")
     
     # 创建直方图
     plt.figure(figsize=(14, 8))
@@ -349,7 +359,7 @@ def main():
     # 使用ProcessPoolExecutor进行并行处理
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
         # 提交所有任务
-        future_to_file = {executor.submit(process_data_file, data_file, output_dir, response_matrix, save_figure): data_file for data_file in data_files}
+        future_to_file = {executor.submit(process_data_file, data_file, output_dir, response_matrix, save_figure, save_data): data_file for data_file in data_files}
         
         # 创建进度条（position=1表示在内部进度条下方）
         with tqdm(total=len(data_files), desc="文件处理进度", ncols=100, leave=True, position=1) as pbar:
