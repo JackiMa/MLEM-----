@@ -32,10 +32,10 @@ scale_matrix = [0.92472407, 1.27042858, 1.13919637, 1.05919509, 0.79361118, 0.79
 iterations = 5000
 
 # 是否保存对比图像
-save_figure = True
+save_figure = False
 
 # 是否保存重建数据（能谱、残差等）
-save_data = True
+save_data = False
 
 # 采用CPU的最大核数，默认使用所有核
 workers = 999
@@ -128,7 +128,9 @@ def process_data_file(data_file, output_dir, response_matrix, save_figure, save_
         # Calculate relative residuals for each energy point
         # If initial value is 0, set to 1 to avoid division by zero
         source_particle_counts[source_particle_counts == 0] = 1  # Replace 0 values with 1
-        recon_relative_residuals_per_energy = ((reconstructed - source_particle_counts)/source_particle_counts)
+
+        # use absolute value to avoid positive/negative cancellation
+        recon_relative_residuals_per_energy = (abs(reconstructed - source_particle_counts)/source_particle_counts)
         
         # Get file name (without path and extension)
         file_name = os.path.splitext(os.path.basename(data_file))[0]
@@ -224,6 +226,17 @@ def analyze_residuals(merged_csv_file, output_dir):
         'Statistic': ['Count', 'Mean', 'Variance', 'Std', 'Min', 'Max']
     }
     
+    # 计算所有能量点合并后的总体统计，并在 eng1 之前插入 total 列
+    total_values = df[energy_columns].to_numpy().ravel()
+    stats_data['total'] = [
+        len(total_values),            # Count (所有 eng* 值的总数量)
+        np.mean(total_values),        # Mean
+        np.var(total_values),         # Variance
+        np.std(total_values),         # Std
+        np.min(total_values),         # Min
+        np.max(total_values)          # Max
+    ]
+    
     # Calculate statistics for each energy point
     means = []
     stds = []
@@ -231,7 +244,7 @@ def analyze_residuals(merged_csv_file, output_dir):
     
     for col in energy_columns:
         values = df[col].values
-        mean_val = np.mean(abs(values)) # Take absolute values before mean to avoid positive/negative cancellation
+        mean_val = np.mean(values) 
         var_val = np.var(values)
         std_val = np.std(values)
         
